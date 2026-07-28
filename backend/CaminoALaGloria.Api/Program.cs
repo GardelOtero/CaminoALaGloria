@@ -10,7 +10,7 @@ app.MapGet("/api/world", (SimulationEngine engine) => engine.World());
 app.MapPost("/api/career", (CreateCareerRequest request, SimulationEngine engine) => Results.Ok(engine.Create(request)));
 app.MapPost("/api/career/decision", (DecisionRequest request, SimulationEngine engine) =>
 {
-    try { return Results.Ok(engine.Decide(request.Career, request.OptionId, request.SkillScore)); }
+    try { return Results.Ok(engine.Decide(request.Career, request.OptionId, request.MiniGame)); }
     catch (InvalidOperationException error) { return Results.BadRequest(new { error = error.Message }); }
 });
 app.MapPost("/api/career/advance", (CareerState career, SimulationEngine engine) =>

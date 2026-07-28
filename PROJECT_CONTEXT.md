@@ -67,7 +67,27 @@ Implementado: API determinista, selección de nacionalidad/dorsal/liga/club, cat
 - La lista de clubes se filtra al elegir liga; ligas, clubes y competiciones proceden del catálogo JSON servido por la API.
 - Las transferencias no son eventos aislados: una actuación en un partido importante activa scouts y ofertas; el usuario compara club, liga, salario y rol.
 
+## Estado implementado: economia, contratos y archivo anual
+
+- La moneda visible de carrera es EUR. Cada jugador tiene un saldo persistente, un contrato anual, salario bruto anual, deposito mensual neto, bono de firma y primas por aparicion, gol/asistencia y titulo.
+- El libro mayor registra cada ingreso o egreso por temporada: nomina, primas, bonos de firma, inversiones ficticias, multas y movimientos financieros. El dinero es estrictamente interno a la partida; no existen pagos ni apuestas reales.
+- Todo contrato vence al cierre de la temporada. Tras registrar el resultado anual se abre una negociacion obligatoria: renovar con el club, elegir una oferta o pedir salida al mercado. La nueva temporada inicia con contrato de un ano y pretemporada.
+- La interfaz ya no requiere un boton de aceptar o avanzar tras resolver una decision. El motor sigue el calendario y encadena automaticamente el siguiente evento, el cierre anual o la negociacion contractual.
+- Cada resolucion muestra el marcador final y si se gano, empato o perdio, junto con la causa narrativa y los efectos visibles de la decision sobre forma, energia, reputacion, relaciones o dinero.
+- La cronologia global se complementa con un archivo expandible por temporada. Cerrado muestra solo PJ, goles, media y titulos; abierto muestra posicion final, eventos, resultados y movimientos del libro mayor.
+- La partida se persiste en IndexedDB, con lectura de respaldo para partidas previas guardadas en localStorage.
+- El catalogo operativo se completa a 90 eventos: los 60 eventos originales y 30 eventos de vida personal, directiva, finanzas e integridad. Los temas de casino y amaño son ficticios, solo se habilitan por edad cuando aplica y presentan consecuencias disciplinarias claras.
+
+## Estado implementado: minijuegos funcionales
+
+- El minijuego ya no envia una puntuacion libre. Cada desafio guarda su estado, secuencia, dificultad e instrucciones en el evento; la API valida los clics recibidos y determina exito o fallo.
+- Hay diez desafios disponibles: penal, tiro libre, definicion, ultimo pase, intercepcion, parada, duelo aereo, rondo de memoria, recuperacion segura tipo buscaminas y dados de casino ficticio.
+- El selector usa un unico desafio anual: 70% cancha, 20% entrenamiento y 10% ocio para mayores de 18. No se puede repetir dentro de la misma temporada.
+- En un partido decisivo, el fallo del desafio fija la accion fallida y su marcador coherente; no existe una tirada posterior que convierta un fallo en victoria.
+
 ## Registro de cambios
+
+- 2026-07-28: se implementan contratos anuales en EUR, libro mayor, archivo expandible por temporada, flujo automatico de eventos, resultados explicitos e IndexedDB; se amplia el catalogo a 90 eventos.
 
 - 2026-07-27: se crea el documento principal y el primer vertical funcional de carrera.
 - 2026-07-27: se añaden nacionalidad, dorsal, liga y equipo elegibles; las transferencias se activan mediante actuaciones en partidos clave.

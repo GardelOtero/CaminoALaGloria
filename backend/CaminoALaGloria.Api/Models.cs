@@ -1,7 +1,7 @@
 namespace CaminoALaGloria.Api;
 
 public record CreateCareerRequest(string Name, string Nationality, int ShirtNumber, string League, string Club, string Position, string Archetype, string Personality);
-public record DecisionRequest(CareerState Career, string OptionId, int? SkillScore = null);
+public record DecisionRequest(CareerState Career, string OptionId, MiniGameSubmission? MiniGame = null);
 
 public sealed class Player
 {
@@ -17,7 +17,7 @@ public sealed class Player
     public int Form { get; set; } = 60;
     public int Energy { get; set; } = 84;
     public int Reputation { get; set; } = 12;
-    public int Money { get; set; } = 1800;
+    public decimal Money { get; set; } = 1800m;
     public int Pace { get; set; }
     public int Shooting { get; set; }
     public int Passing { get; set; }
@@ -42,14 +42,94 @@ public sealed class Player
     public double RatingTotal { get; set; }
 }
 
+public sealed class Contract
+{
+    public string Club { get; set; } = "";
+    public string League { get; set; } = "";
+    public decimal AnnualGrossEur { get; set; }
+    public decimal MonthlyNetEur { get; set; }
+    public decimal SigningBonusEur { get; set; }
+    public decimal AppearanceBonusEur { get; set; }
+    public decimal GoalOrAssistBonusEur { get; set; }
+    public decimal TitleBonusEur { get; set; }
+    public string Role { get; set; } = "Rotación";
+    public int Season { get; set; }
+}
+
+public sealed class FinancialLedgerEntry
+{
+    public string Id { get; set; } = Guid.NewGuid().ToString("N");
+    public int Season { get; set; }
+    public string Month { get; set; } = "";
+    public string Category { get; set; } = "";
+    public string Description { get; set; } = "";
+    public decimal AmountEur { get; set; }
+    public decimal BalanceAfter { get; set; }
+}
+
+public sealed class EventEffect
+{
+    public string Label { get; set; } = "";
+    public int Value { get; set; }
+    public string Direction { get; set; } = "neutral";
+}
+
+public sealed class EventResolution
+{
+    public string Headline { get; set; } = "";
+    public string Result { get; set; } = "";
+    public string? Score { get; set; }
+    public string Detail { get; set; } = "";
+    public List<EventEffect> Effects { get; set; } = [];
+}
+
+public sealed class MiniGameChallenge
+{
+    public string GameId { get; set; } = "";
+    public string Instructions { get; set; } = "";
+    public List<int> TargetSequence { get; set; } = [];
+    public int RequiredScore { get; set; }
+    public int BoardSize { get; set; } = 3;
+    public bool IsLuckGame { get; set; }
+}
+
+public sealed class MiniGameSubmission
+{
+    public List<int> Moves { get; set; } = [];
+    public int? Score { get; set; }
+}
+
+public sealed class SeasonSummary
+{
+    public int Season { get; set; }
+    public string Club { get; set; } = "";
+    public string League { get; set; } = "";
+    public int Appearances { get; set; }
+    public int Goals { get; set; }
+    public double Average { get; set; }
+    public List<string> Titles { get; set; } = [];
+    public int FinalPosition { get; set; }
+}
+
+public sealed class SeasonArchive
+{
+    public SeasonSummary Summary { get; set; } = new();
+    public List<SeasonEvent> Events { get; set; } = [];
+    public List<string> Timeline { get; set; } = [];
+    public List<FinancialLedgerEntry> Ledger { get; set; } = [];
+}
+
 public sealed class CareerState
 {
-    public int Version { get; set; } = 1;
+    public int Version { get; set; } = 2;
     public uint RandomState { get; set; }
     public int Season { get; set; } = 2026;
     public int EventIndex { get; set; }
     public int CurrentMatchday { get; set; }
     public int SeasonEventTarget { get; set; } = 4;
+    public string SeasonMiniGameId { get; set; } = "";
+    public bool SeasonMiniGameUsed { get; set; }
+    public int SalaryMonthsPaid { get; set; }
     public List<int> ImportantMatchdays { get; set; } = [];
     public int SeasonStartAppearances { get; set; }
     public int SeasonStartGoals { get; set; }
@@ -63,8 +143,12 @@ public sealed class CareerState
     public string? PendingClub { get; set; }
     public string? PendingLeague { get; set; }
     public Player Player { get; set; } = new();
+    public Contract? Contract { get; set; }
+    public List<FinancialLedgerEntry> Ledger { get; set; } = [];
+    public List<SeasonArchive> SeasonArchives { get; set; } = [];
     public List<SeasonEvent> CompletedEvents { get; set; } = [];
     public SeasonEvent? ActiveEvent { get; set; }
+    public EventResolution? LastResolution { get; set; }
     public List<TableRow> Table { get; set; } = [];
     public List<MatchFixture> Fixtures { get; set; } = [];
     public List<TransferOffer> TransferOffers { get; set; } = [];
@@ -78,100 +162,25 @@ public sealed class SeasonEvent
     public string Category { get; set; } = "";
     public string Title { get; set; } = "";
     public string Description { get; set; } = "";
-    public string MiniGame { get; set; } = "Decision";
+    public string MiniGame { get; set; } = "Decisión";
+    public string Rarity { get; set; } = "common";
     public List<EventOption> Options { get; set; } = [];
     public string? Outcome { get; set; }
+    public EventResolution? Resolution { get; set; }
+    public MiniGameChallenge? Challenge { get; set; }
     public MatchContext? Match { get; set; }
     public int RequiredSelections { get; set; }
 }
 
-public sealed class MatchFixture
-{
-    public string Id { get; set; } = Guid.NewGuid().ToString("N");
-    public int Matchday { get; set; }
-    public string Competition { get; set; } = "";
-    public string Home { get; set; } = "";
-    public string Away { get; set; } = "";
-    public int? HomeGoals { get; set; }
-    public int? AwayGoals { get; set; }
-    public bool IsPlayed { get; set; }
-}
-
-public sealed class MatchContext
-{
-    public string FixtureId { get; set; } = "";
-    public int Matchday { get; set; }
-    public string Rival { get; set; } = "";
-    public bool IsHome { get; set; }
-    public int Minute { get; set; }
-    public int TeamGoals { get; set; }
-    public int RivalGoals { get; set; }
-    public string Stakes { get; set; } = "";
-    public bool IsDecisive { get; set; }
-}
-
-public sealed class EventOption
-{
-    public string Id { get; set; } = "";
-    public string Label { get; set; } = "";
-    public string Risk { get; set; } = "";
-}
-
-public sealed class TableRow
-{
-    public string Club { get; set; } = "";
-    public int Played { get; set; }
-    public int Points { get; set; }
-    public int GoalDifference { get; set; }
-    public int Wins { get; set; }
-    public int Draws { get; set; }
-    public int Losses { get; set; }
-    public int GoalsFor { get; set; }
-    public int GoalsAgainst { get; set; }
-}
-
-public sealed class TransferOffer
-{
-    public string Club { get; set; } = "";
-    public string League { get; set; } = "";
-    public int Salary { get; set; }
-    public string Role { get; set; } = "Rotación";
-}
-
-public sealed class WorldCatalog
-{
-    public List<string> Nationalities { get; set; } = [];
-    public List<Region> Regions { get; set; } = [];
-    public List<League> Leagues { get; set; } = [];
-    public List<Club> Clubs { get; set; } = [];
-    public List<Competition> Competitions { get; set; } = [];
-}
-public sealed class EventCatalog
-{
-    public List<EventTemplate> Templates { get; set; } = [];
-}
-public sealed class EventTemplate
-{
-    public string Id { get; set; } = "";
-    public string Trigger { get; set; } = "";
-    public string Title { get; set; } = "";
-    public string Description { get; set; } = "";
-    public string MiniGame { get; set; } = "";
-}
+public sealed class MatchFixture { public string Id { get; set; } = Guid.NewGuid().ToString("N"); public int Matchday { get; set; } public string Competition { get; set; } = ""; public string Home { get; set; } = ""; public string Away { get; set; } = ""; public int? HomeGoals { get; set; } public int? AwayGoals { get; set; } public bool IsPlayed { get; set; } }
+public sealed class MatchContext { public string FixtureId { get; set; } = ""; public int Matchday { get; set; } public string Rival { get; set; } = ""; public bool IsHome { get; set; } public int Minute { get; set; } public int TeamGoals { get; set; } public int RivalGoals { get; set; } public string Stakes { get; set; } = ""; public bool IsDecisive { get; set; } }
+public sealed class EventOption { public string Id { get; set; } = ""; public string Label { get; set; } = ""; public string Risk { get; set; } = ""; }
+public sealed class TableRow { public string Club { get; set; } = ""; public int Played { get; set; } public int Points { get; set; } public int GoalDifference { get; set; } public int Wins { get; set; } public int Draws { get; set; } public int Losses { get; set; } public int GoalsFor { get; set; } public int GoalsAgainst { get; set; } }
+public sealed class TransferOffer { public string Club { get; set; } = ""; public string League { get; set; } = ""; public decimal Salary { get; set; } public string Role { get; set; } = "Rotación"; public decimal MonthlyNetEur { get; set; } public decimal SigningBonusEur { get; set; } }
+public sealed class WorldCatalog { public List<string> Nationalities { get; set; } = []; public List<Region> Regions { get; set; } = []; public List<League> Leagues { get; set; } = []; public List<Club> Clubs { get; set; } = []; public List<Competition> Competitions { get; set; } = []; }
+public sealed class EventCatalog { public List<EventTemplate> Templates { get; set; } = []; }
+public sealed class EventTemplate { public string Id { get; set; } = ""; public string Trigger { get; set; } = ""; public string Title { get; set; } = ""; public string Description { get; set; } = ""; public string MiniGame { get; set; } = ""; public string Rarity { get; set; } = "common"; public int MinAge { get; set; } }
 public sealed class Region { public string Name { get; set; } = ""; public string Style { get; set; } = ""; }
-public sealed class League
-{
-    public string Name { get; set; } = "";
-    public string Region { get; set; } = "";
-    public int Prestige { get; set; }
-    public int Tier { get; set; }
-    public int MatchesPerTeam { get; set; }
-    public int PromotionCount { get; set; }
-    public int RelegationCount { get; set; }
-    public string Format { get; set; } = "";
-    public List<string> ClubNames { get; set; } = [];
-    public string? PromotionLeague { get; set; }
-    public string? RelegationLeague { get; set; }
-}
+public sealed class League { public string Name { get; set; } = ""; public string Region { get; set; } = ""; public int Prestige { get; set; } public int Tier { get; set; } public int MatchesPerTeam { get; set; } public int PromotionCount { get; set; } public int RelegationCount { get; set; } public string Format { get; set; } = ""; public List<string> ClubNames { get; set; } = []; public string? PromotionLeague { get; set; } public string? RelegationLeague { get; set; } }
 public sealed class Club { public string Name { get; set; } = ""; public string League { get; set; } = ""; public string Region { get; set; } = ""; public int Prestige { get; set; } public string Nickname { get; set; } = ""; }
 public sealed class Competition { public string Name { get; set; } = ""; public string Scope { get; set; } = ""; public string Type { get; set; } = ""; }
