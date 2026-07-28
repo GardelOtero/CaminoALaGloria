@@ -10,6 +10,8 @@ Simulador single-player de carrera futbolística. La persona inicia a los 16 añ
 - Se corrigió la continuidad de calendario y tabla para clubes que ascienden, descienden o cambian de liga; el catálogo es una foto inicial, pero el club activo entra a su nueva división.
 - Se incorporó retiro automático a los 40 años y el texto de resumen final en el estado de carrera.
 - Deuda prioritaria: calibrar competencia, producción por posición, lesiones, descensos y diversidad de eventos. La prueba produjo demasiados campeonatos y cero asistencias, por lo que aún no refleja una distribución realista.
+- El siguiente diseño debe conservar exactamente un minijuego manual por temporada, pero rotarlo por posición y contexto (penal, tiro libre, definición, último pase, intercepción o parada). Pretemporada y los eventos extracancha siguen siendo decisiones por clic.
+- El palmarés actual solo registra campeonatos de liga por posición 1.º; faltan copa, continental, selección, premios individuales y récords con criterios de elegibilidad propios.
 
 ## Reglas innegociables
 

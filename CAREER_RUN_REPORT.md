@@ -45,6 +45,54 @@ Leyenda: `PRE` atributos elegidos; `✓/×` éxito/fallo de la jugada; `REC` des
 - 870 partidos, 62 goles, 0 asistencias, promedio global 7.04, media 78 y dinero 240,490.
 - 18 títulos: Liga MX 2026; J1 League 2028–2038; LALIGA EA SPORTS 2040–2042 y 2046–2048.
 
+## Palmarés y posiciones con relevancia narrativa
+
+| Bloque | Hecho | Por qué importa en la carrera |
+|---|---|---|
+| México, 2026 | 1.º de 18 con América; Liga MX 2026 | Primer título y validación de que el jugador puede rendir desde su club formador. |
+| México, 2027 | 8.º de 18 con América | Salida creíble: no fue campeón ni estaba en una lucha de descenso; el rendimiento temprano activó la oferta de Yokohama. |
+| Japón, 2028–2038 | 11 campeonatos J1 League consecutivos con Yokohama F. Marinos | Es el gran dominio de la carrera, pero también el principal síntoma de desbalance. El reporte debe tratarlo como hito extraordinario, no como comportamiento esperado. |
+| España, 2039 | 6.º de 20 con Getafe | Primera temporada de adaptación a una liga de mayor nivel: plaza media-alta sin título. |
+| España, 2040–2042 | 3 LALIGAs consecutivas | Pico de la carrera en Europa. |
+| España, 2043–2045 | 3.º, 5.º y 3.º | Años competitivos sin título; son más verosímiles que el dominio continuo y deberían producir consecuencias: renovación, interés de clubes, premios y presión. |
+| España, 2046–2048 | 3 LALIGAs más | Segundo pico deportivo, ya con desgaste por edad. |
+| España, 2049 | 2.º de 20 y retiro | Final relevante: se retira compitiendo por el título, no tras desaparecer de la rotación. |
+
+### Títulos registrados por el motor
+
+| Competición | Temporadas | Total |
+|---|---:|---:|
+| Liga MX | 2026 | 1 |
+| J1 League | 2028, 2029, 2030, 2031, 2032, 2033, 2034, 2035, 2036, 2037, 2038 | 11 |
+| LALIGA EA SPORTS | 2040, 2041, 2042, 2046, 2047, 2048 | 6 |
+| **Total** |  | **18** |
+
+Nota técnica: hoy un título se concede únicamente al terminar primero la liga regular. No se simulan todavía copa nacional, supercopa, torneos continentales, selección nacional, playoffs, ascensos por promoción ni premios individuales; por tanto, esos 18 son títulos de liga, no un palmarés completo.
+
+## Minijuegos: qué existe realmente
+
+| Situación | Nombre mostrado | Interacción real | Frecuencia |
+|---|---|---|---|
+| Partido decisivo de atacante/extremo | Definición decisiva | Barra móvil de precisión: se pulsa para enviar `skillScore` de 0 a 100; el máximo aporta hasta +0.22 a la probabilidad de éxito. | Exactamente 1 por temporada. |
+| Partido decisivo de defensa/portero | Última intervención | La misma barra de precisión, con narrativa defensiva. | Exactamente 1 por temporada. |
+| Partido importante no decisivo, atacante | Decisión ofensiva | Dos botones: atacar o combinar. Es una decisión probabilística, no un minijuego de habilidad. | 2–4 por temporada. |
+| Partido importante no decisivo, defensa/portero | Anticipación | Dos botones: presionar o sostener la línea. Es decisión probabilística. | 2–4 por temporada. |
+| Pretemporada | Planificar 2 de 3 | Selección obligatoria de dos atributos entre tres; no mide destreza manual. | 1 por temporada. |
+| Entrenamiento, prensa, recuperación y mercado | Entrenamiento / Conferencia / Recuperación / Negociación | Botones de decisión con consecuencias de atributos, relaciones, riesgo o transferencia. | Contextual. |
+
+En esta corrida hubo 24 minijuegos de precisión: uno por cada temporada 2026–2049. Todos fueron `GAME=100`, por lo que la prueba validó el extremo alto de precisión; no validó el rango bajo ni la experiencia de fallar por mala pulsación.
+
+## Mejoras priorizadas después de la prueba
+
+1. **Balance de ligas.** Separar fuerza de club, plantilla, forma, fatiga y dificultad de liga; limitar rachas de campeonatos y hacer que el ascenso de media no convierta automáticamente al club en campeón.
+2. **Resultados y estadísticas por posición.** Un delantero necesita distribución de goles, asistencias, tiros, ocasiones creadas, minutos y suplencias. Porteros y defensas necesitan porterías a cero, paradas, entradas y errores. La carrera de prueba terminó con 0 asistencias.
+3. **Relevancia real de la tabla.** Antes de generar el evento decisivo, calcular escenarios exactos: puntos necesarios, rival directo, objetivo (título, Europa, salvación) y consecuencia visible en la clasificación.
+4. **Variedad de minijuegos sin romper la regla de uno por temporada.** Conservar un solo minijuego manual, pero elegir entre definición, penal, tiro libre, mano a mano, último pase, intercepción, parada o salida aérea según posición y contexto. Los demás eventos siguen siendo clics.
+5. **Dificultad del minijuego.** Añadir zona verde, velocidad y tolerancia variables por presión, fatiga, pie débil, atributo relevante y calidad del rival; registrar precisión, no solo éxito final.
+6. **Palmarés completo.** Añadir copa nacional, competiciones continentales, selección, premios individuales y récords; cada uno debe tener calendario, elegibilidad y criterios propios.
+7. **Transferencias y relaciones.** La oferta debe considerar rol prometido, salario, duración, nivel de competencia, idioma/adaptación, relación con técnico/agente y oportunidades reales de jugar.
+8. **Lesiones, descenso y consecuencias.** Convertir riesgo en lesiones con duración, rehabilitación y pérdida/recuperación de atributos; modelar descenso, rescisión y presión mediática de forma persistente.
+
 ## Resultado de la validación
 
 El flujo entero funcionó: creación, pretemporada, partidos contextuales, entrenamiento, recuperación, minijuegos, transferencias diferidas, cambios de liga, tablas, títulos y retiro. Se detectó un problema de balance: demasiados campeonatos y cero asistencias para un delantero durante 870 partidos. La prioridad siguiente debe ser calibrar probabilidades de tabla, producción por posición, lesiones, descensos y variedad de relaciones/eventos.
