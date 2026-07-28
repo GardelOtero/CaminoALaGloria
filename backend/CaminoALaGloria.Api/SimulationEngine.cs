@@ -5,11 +5,14 @@ namespace CaminoALaGloria.Api;
 public sealed class SimulationEngine
 {
     private readonly WorldCatalog _world;
+    private readonly EventCatalog _events;
 
     public SimulationEngine(IWebHostEnvironment environment)
     {
         var path = Path.Combine(environment.ContentRootPath, "Data", "world.json");
         _world = JsonSerializer.Deserialize<WorldCatalog>(File.ReadAllText(path), JsonOptions) ?? new WorldCatalog();
+        var eventsPath = Path.Combine(environment.ContentRootPath, "Data", "events.json");
+        _events = JsonSerializer.Deserialize<EventCatalog>(File.ReadAllText(eventsPath), JsonOptions) ?? new EventCatalog();
         if (_world.Clubs.Count == 0)
         {
             _world.Clubs = _world.Leagues.SelectMany(league => league.ClubNames.Select((name, index) => new Club
@@ -235,13 +238,26 @@ public sealed class SimulationEngine
     {
         var match = matchEvent.Match!;
         if (state.Player.Energy < 58 || state.Player.InjuryRisk > 38)
-            return OffPitch("recovery", "Recuperación", "El cuerpo pide atención", $"Después del partido ante {match.Rival}, el cuerpo técnico detectó carga alta. Esta decisión afectará tu disponibilidad para las próximas jornadas.", "Recuperación",
+        {
+            var template = EventTemplate(state, "recovery");
+            return OffPitch(template.Id, "Recuperación", template.Title, $"Después del partido ante {match.Rival}, el cuerpo técnico detectó carga alta. Esta decisión afectará tu disponibilidad para las próximas jornadas.", template.MiniGame,
                 ("rest", "Bajar cargas y hacer recuperación", "Bajo"), ("push", "Entrenar pese a la molestia", "Alto"));
+        }
         if (!matchSuccess)
-            return OffPitch("press", "Prensa", "Conferencia después del resultado", $"El resultado ante {match.Rival} dejó preguntas sobre tu actuación. Tu respuesta afectará al técnico, la afición y los medios.", "Conferencia",
+        {
+            var template = EventTemplate(state, "press");
+            return OffPitch(template.Id, "Prensa", template.Title, $"El resultado ante {match.Rival} dejó preguntas sobre tu actuación. Tu respuesta afectará al técnico, la afición y los medios.", template.MiniGame,
                 ("team", "Asumir responsabilidad y defender al grupo", "Bajo"), ("blame", "Cuestionar el planteamiento", "Alto"));
-        return OffPitch("training", "Entrenamiento", "La semana después del partidazo", $"Tu actuación ante {match.Rival} te dejó crédito con el entrenador. Puedes usarlo para trabajar una faceta específica, con riesgo físico.", "Entrenamiento",
-            ("intense", "Doble sesión para subir el nivel", "Alto"), ("technical", "Sesión técnica controlada", "Medio"));
+        }
+        var training = EventTemplate(state, "training");
+        return new SeasonEvent { Id = training.Id, Category = "Entrenamiento", Title = training.Title, MiniGame = training.MiniGame,
+            Description = $"Tu actuación ante {match.Rival} te dejó crédito con el entrenador. Elige una rutina: dos son favorables y una tiene riesgo de retroceso.", Options = CreateTrainingPlanOptions(state), RequiredSelections = 1 };
+    }
+
+    private EventTemplate EventTemplate(CareerState state, string trigger)
+    {
+        var templates = _events.Templates.Where(template => template.Trigger == trigger).ToList();
+        return templates.Count == 0 ? new EventTemplate { Id = trigger, Trigger = trigger, Title = trigger, MiniGame = "Decisión" } : templates[NextInt(state, templates.Count)];
     }
 
     private static SeasonEvent OffPitch(string id, string category, string title, string description, string minigame, params (string Id, string Label, string Risk)[] options) => new()
@@ -252,6 +268,7 @@ public sealed class SimulationEngine
 
     private CareerState ResolveOffPitchEvent(CareerState state, SeasonEvent active, EventOption option)
     {
+        if (active.Category == "Entrenamiento" && option.Id.StartsWith("drill:")) return ResolveTrainingPlan(state, active, option);
         var p = state.Player;
         var chance = Math.Clamp(.42 + p.Morale / 300d + p.CoachRelation / 450d - RiskPenalty(option.Risk), .18, .9);
         var success = Next(state) < chance;
@@ -283,57 +300,57 @@ public sealed class SimulationEngine
     private SeasonEvent CreatePreseasonEvent(CareerState state)
     {
         var p = state.Player;
-        var candidates = SuggestedPreseasonAttributes(p)
-            .OrderByDescending(attribute => PreseasonNeed(attribute, p, state))
-            .ThenBy(_ => Next(state))
-            .Take(3)
-            .Select(attribute => new EventOption { Id = attribute, Label = PreseasonLabel(attribute), Risk = "Plan de trabajo" })
-            .ToList();
         return new SeasonEvent
         {
             Id = $"preseason-{state.Season}", Category = "Pretemporada", Title = "Plan de pretemporada",
-            Description = $"El cuerpo técnico revisó tu campaña anterior: {p.LastSeasonAppearances} PJ, {p.LastSeasonGoals} goles, {p.LastSeasonAssists} asistencias y promedio {p.LastSeasonAverage:0.00}. Elige exactamente dos de tres facetas para trabajar.",
-            MiniGame = "Planificar 2 de 3", Options = candidates, RequiredSelections = 2
+            Description = $"El cuerpo técnico revisó tu campaña anterior: {p.LastSeasonAppearances} PJ, {p.LastSeasonGoals} goles, {p.LastSeasonAssists} asistencias y promedio {p.LastSeasonAverage:0.00}. Elige una rutina: dos ofrecen progreso y una supone riesgo.",
+            MiniGame = "Rutina de pretemporada", Options = CreateTrainingPlanOptions(state), RequiredSelections = 1
         };
     }
 
     private CareerState ResolvePreseason(CareerState state, SeasonEvent active, string optionId)
     {
-        var selected = optionId.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Distinct().ToList();
-        if (selected.Count != active.RequiredSelections || selected.Any(id => active.Options.All(option => option.Id != id)))
-            throw new InvalidOperationException("La pretemporada requiere elegir exactamente dos atributos de las tres opciones.");
+        var option = active.Options.FirstOrDefault(candidate => candidate.Id == optionId)
+            ?? throw new InvalidOperationException("La rutina elegida no pertenece a la pretemporada.");
+        return ResolveTrainingPlan(state, active, option);
+    }
 
-        var p = state.Player;
-        var performance = (p.LastSeasonAverage - 6.3) * .08 + Math.Min(.12, p.LastSeasonGoals * .008 + p.LastSeasonAssists * .006);
-        var participation = p.LastSeasonAppearances >= 18 ? .08 : p.LastSeasonAppearances >= 8 ? 0 : -.08;
-        var agePenalty = p.Age >= 34 ? -.18 : p.Age >= 31 ? -.09 : 0;
-        var injuryPenalty = p.InjuryRisk > 40 ? -.12 : p.InjuryRisk > 25 ? -.05 : 0;
-        var trophyBonus = state.Trophies.Count > 0 ? .04 : 0;
-        var reports = new List<string>();
-        foreach (var attribute in selected)
+    private List<EventOption> CreateTrainingPlanOptions(CareerState state)
+    {
+        var attributes = TrainingAttributes(state.Player).OrderBy(_ => Next(state)).Take(3).ToList();
+        return attributes.Select((attribute, index) => new EventOption
         {
-            var chance = Math.Clamp(.52 + performance + participation + agePenalty + injuryPenalty + trophyBonus + Next(state) * .08, .18, .9);
-            if (Next(state) < chance)
-            {
-                var gain = 2 + NextInt(state, 3);
-                AdjustAttribute(p, attribute, gain);
-                reports.Add($"{PreseasonLabel(attribute)} +{gain}");
-            }
-            else
-            {
-                var loss = p.Age >= 31 || p.InjuryRisk > 30 ? 1 + NextInt(state, 2) : 1;
-                AdjustAttribute(p, attribute, -loss);
-                reports.Add($"{PreseasonLabel(attribute)} -{loss}");
-            }
+            Id = $"drill:{(index == 2 ? "risk" : "boost")}:{attribute}",
+            Label = index == 2 ? $"Forzar {PreseasonLabel(attribute)}" : $"Potenciar {PreseasonLabel(attribute)}",
+            Risk = index == 2 ? "Riesgo de retroceso" : "Progreso probable"
+        }).ToList();
+    }
+
+    private CareerState ResolveTrainingPlan(CareerState state, SeasonEvent active, EventOption option)
+    {
+        var parts = option.Id.Split(':');
+        if (parts.Length != 3) throw new InvalidOperationException("Rutina de entrenamiento inválida.");
+        var positive = parts[1] == "boost"; var focus = parts[2]; var p = state.Player;
+        var affected = TrainingAttributes(p).OrderBy(_ => Next(state)).Take(1 + NextInt(state, 4)).ToList();
+        if (!affected.Contains(focus)) affected[0] = focus;
+        var reports = new List<string>();
+        foreach (var attribute in affected.Distinct())
+        {
+            var delta = 1 + NextInt(state, 4);
+            AdjustAttribute(p, attribute, positive ? delta : -delta);
+            reports.Add($"{PreseasonLabel(attribute)} {(positive ? "+" : "-")}{delta}");
         }
-        if (p.Age >= 33 && Next(state) < .35) { p.Pace = Floor(p.Pace - 1); p.Physical = Floor(p.Physical - 1); reports.Add("desgaste por edad: RIT -1, FIS -1"); }
-        if (p.InjuryRisk > 45) { p.Energy = Floor(p.Energy - 5); reports.Add("carga física: energía -5"); }
-        p.Morale = Cap(p.Morale + (reports.Any(r => r.Contains('+')) ? 3 : -3));
-        RecalculateOverall(p);
-        active.Outcome = $"Pretemporada completada: {string.Join(" · ", reports)}. Tu media ahora es {p.Overall}.";
+        p.Energy = Floor(p.Energy + (positive ? -4 : -8));
+        p.InjuryRisk = Cap(p.InjuryRisk + (positive ? 2 : 7));
+        p.Morale = Cap(p.Morale + (positive ? 3 : -4)); RecalculateOverall(p);
+        active.Outcome = $"{(active.Category == "Pretemporada" ? "Pretemporada" : "Entrenamiento")} resuelto: {string.Join(" · ", reports)}. Se afectaron {reports.Count} atributo(s); media {p.Overall}.";
         state.CompletedEvents.Add(active); state.Timeline.Add(active.Outcome); state.ActiveEvent = null;
         return state;
     }
+
+    private static IEnumerable<string> TrainingAttributes(Player p) => p.Position == "Portero"
+        ? new[] { "goalkeeping", "passing", "physical", "dribbling" }
+        : new[] { "pace", "shooting", "passing", "dribbling", "defending", "physical" };
 
     private static IEnumerable<string> SuggestedPreseasonAttributes(Player p)
     {

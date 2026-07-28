@@ -146,6 +146,18 @@ public sealed class WorldCatalog
     public List<Club> Clubs { get; set; } = [];
     public List<Competition> Competitions { get; set; } = [];
 }
+public sealed class EventCatalog
+{
+    public List<EventTemplate> Templates { get; set; } = [];
+}
+public sealed class EventTemplate
+{
+    public string Id { get; set; } = "";
+    public string Trigger { get; set; } = "";
+    public string Title { get; set; } = "";
+    public string Description { get; set; } = "";
+    public string MiniGame { get; set; } = "";
+}
 public sealed class Region { public string Name { get; set; } = ""; public string Style { get; set; } = ""; }
 public sealed class League
 {

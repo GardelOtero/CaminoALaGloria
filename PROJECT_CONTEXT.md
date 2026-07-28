@@ -13,6 +13,15 @@ Simulador single-player de carrera futbolística. La persona inicia a los 16 añ
 - El siguiente diseño debe conservar exactamente un minijuego manual por temporada, pero rotarlo por posición y contexto (penal, tiro libre, definición, último pase, intercepción o parada). Pretemporada y los eventos extracancha siguen siendo decisiones por clic.
 - El palmarés actual solo registra campeonatos de liga por posición 1.º; faltan copa, continental, selección, premios individuales y récords con criterios de elegibilidad propios.
 
+## Formatos de temporada que se implementarán
+
+- La fase regular no puede entregar siempre el título. Cada liga declarará en el catálogo su fase final, ascenso/descenso y copas asociadas.
+- Liga MX: torneo corto de 17 jornadas, Play-In para puestos 7.º–10.º, Liguilla desde cuartos y final; Apertura y Clausura se registrarán como torneos distintos.
+- Championship: 46 jornadas, ascenso directo para 1.º–2.º y playoff de ascenso para puestos siguientes. La EFL anunció una ampliación del playoff desde 2026/27, por lo que el formato será versionado por temporada, no fijo.
+- LALIGA EA SPORTS y Premier League: liga regular de ida/vuelta, descenso y copa nacional; LALIGA HYPERMOTION añade fase de ascenso después de sus 42 jornadas.
+- J.League: el catálogo deberá versionar los cambios de formato de 2026 y los playoffs de transición, en vez de asumir una tabla genérica.
+- Todas las copas y playoffs usarán rondas y resultados persistentes: sorteo, ida/vuelta o partido único, prórroga, penaltis, final y repercusión en títulos, dinero, fatiga, reputación y clasificación continental.
+
 ## Reglas innegociables
 
 - Vue + TypeScript para la experiencia; ASP.NET Core 10 para todas las simulaciones.
