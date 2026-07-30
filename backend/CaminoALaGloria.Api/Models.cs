@@ -2,6 +2,11 @@ namespace CaminoALaGloria.Api;
 
 public record CreateCareerRequest(string Name, string Nationality, int ShirtNumber, string League, string Club, string Position, string Archetype, string Personality);
 public record DecisionRequest(CareerState Career, string OptionId, MiniGameSubmission? MiniGame = null);
+public record ActivityRequest(CareerState Career, string ActivityId);
+public record ShopPurchaseRequest(CareerState Career, string ProductId);
+public record CasinoOpenRequest(CareerState Career, string Game, int BetPercent);
+public record CasinoActionRequest(CareerState Career, string Action);
+public record CasinoQuoteRequest(CareerState Career, string Game, int BetPercent);
 public record WorldMarketRequest(CareerState Career);
 
 public sealed class Player
@@ -15,6 +20,9 @@ public sealed class Player
     public int Age { get; set; } = 16;
     public int Overall { get; set; } = 58;
     public int Potential { get; set; } = 82;
+    public string DevelopmentTrajectory { get; set; } = "En desarrollo";
+    public string DevelopmentNote { get; set; } = "Aún construyes tu carrera.";
+    public int LastSeasonOverallChange { get; set; }
     public int Form { get; set; } = 60;
     public int Energy { get; set; } = 84;
     public int Reputation { get; set; } = 12;
@@ -122,7 +130,14 @@ public sealed class SeasonSummary
     public decimal MarketValueEur { get; set; }
     public int NationalAppearances { get; set; }
     public double Average { get; set; }
+    public int StartOverall { get; set; }
+    public int EndOverall { get; set; }
+    public int OverallChange { get; set; }
+    public int Potential { get; set; }
+    public string DevelopmentTrajectory { get; set; } = "En desarrollo";
+    public string DevelopmentNote { get; set; } = "";
     public List<string> Titles { get; set; } = [];
+    public List<TournamentCampaign> TournamentCampaigns { get; set; } = [];
     public int FinalPosition { get; set; }
     public List<IndividualAward> Awards { get; set; } = [];
     public string Role { get; set; } = "Rotación";
@@ -149,7 +164,7 @@ public sealed class SeasonArchive
 
 public sealed class CareerState
 {
-    public int Version { get; set; } = 4;
+    public int Version { get; set; } = 6;
     public uint RandomState { get; set; }
     public int Season { get; set; } = 2026;
     public int EventIndex { get; set; }
@@ -169,6 +184,7 @@ public sealed class CareerState
     public double SeasonStartRatingTotal { get; set; }
     public int SeasonStartMinutes { get; set; }
     public int SeasonStartNationalAppearances { get; set; }
+    public int SeasonStartOverall { get; set; }
     public bool SeasonComplete { get; set; }
     public bool IsRetired { get; set; }
     public string? RetirementSummary { get; set; }
@@ -201,7 +217,34 @@ public sealed class CareerState
     public int SeasonMinutes { get; set; }
     public List<string> Objectives { get; set; } = [];
     public List<string> CareerMilestones { get; set; } = [];
+    public Dictionary<string, int> ActivityCooldowns { get; set; } = [];
+    public List<TournamentCampaign> TournamentCampaigns { get; set; } = [];
+    public LifestyleProfile Lifestyle { get; set; } = new();
+    public List<LifestyleActivityRecord> LifestyleHistory { get; set; } = [];
+    public List<CasinoHand> CasinoHistory { get; set; } = [];
+    public CasinoSession? CasinoSession { get; set; }
 }
+
+public sealed class LifestyleProfile
+{
+    public int AgentLevel { get; set; }
+    public int PublicImage { get; set; } = 50;
+    public int Discipline { get; set; } = 65;
+    public int Wellbeing { get; set; } = 60;
+    public Dictionary<string, int> Inventory { get; set; } = [];
+    public List<string> PermanentPurchases { get; set; } = [];
+    public decimal RecurringCostPerSeason { get; set; }
+}
+public sealed class ShopProductQuote { public string Id { get; set; } = ""; public string Name { get; set; } = ""; public string Family { get; set; } = ""; public string Benefit { get; set; } = ""; public decimal PriceEur { get; set; } public decimal MaintenanceEur { get; set; } public int Inventory { get; set; } public bool Owned { get; set; } public bool CanBuy { get; set; } }
+public sealed class CasinoQuote { public string Game { get; set; } = ""; public int BetPercent { get; set; } public decimal BetEur { get; set; } public decimal SessionLossLimitEur { get; set; } public decimal OpeningBalanceEur { get; set; } public string Payout { get; set; } = ""; public bool CanOpen { get; set; } public string? BlockReason { get; set; } }
+public sealed class LifestyleActivityRecord { public int Season { get; set; } public int Matchday { get; set; } public string Name { get; set; } = ""; public decimal CostEur { get; set; } public string Result { get; set; } = ""; }
+public sealed class CasinoSession
+{
+    public string Game { get; set; } = ""; public decimal OpeningBalance { get; set; } public decimal LossLimit { get; set; }
+    public int HandsPlayed { get; set; } public decimal NetResult { get; set; } public decimal BetEur { get; set; }
+    public List<int> PlayerCards { get; set; } = []; public List<int> DealerCards { get; set; } = []; public bool HandInProgress { get; set; }
+}
+public sealed class CasinoHand { public int Season { get; set; } public string Game { get; set; } = ""; public decimal BetEur { get; set; } public decimal NetEur { get; set; } public string Result { get; set; } = ""; public string Detail { get; set; } = ""; }
 
 public sealed class WorldSeasonRecord
 {
@@ -270,6 +313,7 @@ public sealed class SeasonEvent
     public MiniGameChallenge? Challenge { get; set; }
     public MatchContext? Match { get; set; }
     public int RequiredSelections { get; set; }
+    public bool IsHubActivity { get; set; }
 }
 
 public sealed class MatchFixture { public string Id { get; set; } = Guid.NewGuid().ToString("N"); public int Matchday { get; set; } public string Competition { get; set; } = ""; public string Home { get; set; } = ""; public string Away { get; set; } = ""; public int? HomeGoals { get; set; } public int? AwayGoals { get; set; } public bool IsPlayed { get; set; } }
@@ -288,8 +332,9 @@ public sealed class EventOption
     public string FailureOutcome { get; set; } = "";
 }
 public sealed class TableRow { public string Club { get; set; } = ""; public int Played { get; set; } public int Points { get; set; } public int GoalDifference { get; set; } public int Wins { get; set; } public int Draws { get; set; } public int Losses { get; set; } public int GoalsFor { get; set; } public int GoalsAgainst { get; set; } }
-public sealed class TransferOffer { public string Club { get; set; } = ""; public string League { get; set; } = ""; public decimal Salary { get; set; } public string Role { get; set; } = "Rotación"; public decimal MonthlyNetEur { get; set; } public decimal SigningBonusEur { get; set; } public decimal ClubBudgetEur { get; set; } public int ClubStrength { get; set; } public string Need { get; set; } = "Refuerzo de plantilla"; public string MarketTier { get; set; } = ""; public int RequiredOverall { get; set; } public int Compatibility { get; set; } public string Reason { get; set; } = ""; }
+public sealed class TransferOffer { public string Club { get; set; } = ""; public string League { get; set; } = ""; public decimal Salary { get; set; } public string Role { get; set; } = "Rotación"; public decimal MonthlyNetEur { get; set; } public decimal SigningBonusEur { get; set; } public decimal ClubBudgetEur { get; set; } public int ClubStrength { get; set; } public string Need { get; set; } = "Refuerzo de plantilla"; public string MarketTier { get; set; } = ""; public int RequiredOverall { get; set; } public int Compatibility { get; set; } public string Reason { get; set; } = ""; public bool IsRival { get; set; } public int ContractYears { get; set; } = 3; public decimal ReleaseClauseEur { get; set; } public string Adaptation { get; set; } = "Normal"; }
 public sealed class WorldCatalog { public List<string> Nationalities { get; set; } = []; public List<Region> Regions { get; set; } = []; public List<League> Leagues { get; set; } = []; public List<Club> Clubs { get; set; } = []; public List<Competition> Competitions { get; set; } = []; public List<NationalTeamProfile> NationalTeams { get; set; } = []; }
+public sealed class TournamentCampaign { public string Id { get; set; } = Guid.NewGuid().ToString("N"); public int Season { get; set; } public string Competition { get; set; } = ""; public string Type { get; set; } = "Copa"; public string Format { get; set; } = "Eliminación directa"; public string Phase { get; set; } = "Programada"; public bool Qualified { get; set; } public bool KeyMomentPlayed { get; set; } public int Played { get; set; } public int Wins { get; set; } public int Goals { get; set; } public string BestRound { get; set; } = ""; public string? Champion { get; set; } public string? RunnerUp { get; set; } public decimal PrizeEur { get; set; } public List<string> KeyMatches { get; set; } = []; }
 public sealed class PlayerMarketProfile
 {
     public int Score { get; set; }

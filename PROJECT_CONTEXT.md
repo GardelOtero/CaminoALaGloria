@@ -1,5 +1,12 @@
 # Camino a la Gloria — contexto principal
 
+## Progresión de carrera dinámica
+
+- La media se calcula desde atributos FIFA y rendimiento: minutos, promedio, producción, títulos, edad y lesiones.
+- El potencial es dinámico: una revelación puede crecer 5–8 de media y elevar su techo; una mala carrera puede estancarse o caer.
+- Las decisiones ordinarias afectan primero forma, energía, moral y relaciones; el deterioro permanente requiere continuidad pobre, edad, lesión grave o una decisión grave.
+- El resumen anual registra media inicial/final, cambio, potencial, trayectoria y explicación.
+
 ## Visión
 
 Simulador single-player de carrera futbolística. La persona inicia a los 16 años, toma decisiones de alto impacto y construye un legado frente a una generación simulada de futbolistas.
@@ -91,8 +98,25 @@ Implementado: API determinista, selección de nacionalidad/dorsal/liga/club, cat
 - El panel principal comunica con color si forma, energÃ­a, moral, riesgo y atributos estÃ¡n bien, en alerta o mal. TambiÃ©n explica rol, minutos y pistas de progreso sin revelar umbrales internos.
 - El archivo anual compacto muestra PJ, goles, media y tÃ­tulos; al abrirlo revela asistencias, minutos, selecciÃ³n, rol, valor, premios, hitos y el registro completo de sucesos de esa temporada.
 - Los resultados de casino muestran el importe real en EUR de la partida y el libro mayor conserva el movimiento. El casino sigue siendo ficticio, opcional y sin dinero real.
+- El hub "Vida del jugador" permite iniciar entrenamiento, recuperación, agente, vida personal, compra de kit, compra de botas y casino ficticio. Cada acción aplica coste o efecto real, queda en el libro mayor cuando corresponde y se recupera después de dos jornadas.
 
 ## Registro de cambios
+
+## Vida fuera de cancha, tienda y casino (canónico)
+
+- El perfil persistente de vida incorpora bienestar, disciplina, imagen, inventario de consumibles, compras permanentes, mantenimiento y un historial por temporada. Las partidas anteriores se inicializan con valores seguros al cargarse.
+- La tienda usa únicamente EUR ficticios de la carrera. Los consumibles tienen máximo de tres unidades y caducan al cierre de temporada; equipo, vivienda, auto y estilo dan efectos moderados o situacionales, sin comprar media de forma ilimitada.
+- Los servicios de nutrición, psicología y media training tienen costes proporcionados al salario y efectos explícitos. Cada compra, actividad y movimiento de casino queda en el libro mayor y en la cronología.
+- El casino ficticio está restringido a mayores de 18 años: una sesión admite hasta cinco manos, límite de pérdida de 10% del saldo inicial y máximo de EUR 5,000, apuestas predefinidas del 1%, 2% o 4%, y dos jornadas de enfriamiento al salir. Dados, ruleta y blackjack se validan en el servidor; el dinero nunca sale de la partida ni representa dinero real.
+
+## Campañas de copa, mercado y resolución contextual
+
+- Al abrir una temporada se crean campañas persistentes de copa nacional y, cuando el nivel del club o del jugador lo justifica, competición continental. Cada una guarda formato, fase, partidos, victorias, goles, mejor ronda, premios, campeón y partidos clave.
+- La copa no queda limitada a un cálculo de cierre: durante el calendario aparecen momentos jugables de eliminación nacional y de competición continental. La decisión de cancha modifica el marcador, la continuidad, la reputación y el registro de la campaña; el resto del recorrido se simula de forma coherente al cerrar el año.
+- La tabla de liga únicamente contabiliza partidos ligueros. Los encuentros de copa se guardan por separado, por lo que no alteran puntos, diferencia de goles ni posición de la competición doméstica.
+- El archivo anual conserva una copia completa de cada campaña. La vista compacta mantiene PJ, goles, media y títulos; al abrirla muestra también el recorrido de cada copa y sus momentos clave.
+- Las ofertas de mercado contienen duración de contrato, cláusula, adaptación, necesidad deportiva y señal de rivalidad. El motor amplía la variedad de candidatos, pero mantiene el filtro por media, compatibilidad, presupuesto y escalón competitivo.
+- El resultado más reciente se muestra dentro de la misma tarjeta de evento, junto a la próxima situación, para que el jugador vea de inmediato qué ocurrió y qué estadísticas fueron afectadas.
 
 ## Partido contextual y mercado por escalones
 

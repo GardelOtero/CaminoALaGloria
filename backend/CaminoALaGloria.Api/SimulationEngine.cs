@@ -42,7 +42,7 @@ public sealed class SimulationEngine
                 Nationality = _world.Nationalities.Contains(request.Nationality) ? request.Nationality : _world.Nationalities.First(),
                 ShirtNumber = Math.Clamp(request.ShirtNumber, 1, 99), Position = request.Position,
                 Archetype = request.Archetype, Personality = request.Personality,
-                Overall = StartingOverall(request.Position), Potential = 80 + (request.Archetype == "Talento" ? 6 : 0)
+                Overall = StartingOverall(request.Position), Potential = StartingPotential(request.Archetype)
             }
         };
         state.NationalTeam = NationalTeamFor(state.Player.Nationality);
@@ -84,6 +84,12 @@ public sealed class SimulationEngine
             }
             ResolvePlayerFixture(state, playerFixture, null, false);
             UpdateTable(state);
+            var tournamentEvent = CreateTournamentKeyEvent(state);
+            if (tournamentEvent is not null)
+            {
+                state.ActiveEvent = tournamentEvent;
+                return state;
+            }
         }
 
         PaySalaryUntil(state, 12);
@@ -119,6 +125,7 @@ public sealed class SimulationEngine
         state.LastResolution = active.Resolution;
         if (active.Challenge is not null) state.SeasonMiniGameUsed = true;
         state.CompletedEvents.Add(active); RecordTemplate(state, active.TemplateId ?? active.Id, active.Match?.Rival); state.Timeline.Add(active.Outcome); state.EventIndex++;
+        ResolveTournamentKeyMoment(state, fixture, success);
         state.ActiveEvent = null; UpdateTable(state);
 
         RefreshMarketProfile(state);
@@ -127,14 +134,21 @@ public sealed class SimulationEngine
             state.TransferOffers = GenerateTransferOffers(state);
             if (state.TransferOffers.Count > 0) state.ActiveEvent = TransferEvent(state);
         }
+        if (state.ActiveEvent is null) state.ActiveEvent = CreateTournamentKeyEvent(state);
         if (state.ActiveEvent is null) state.ActiveEvent = CreateOffPitchEvent(state, active, success);
         return state;
     }
 
     public CareerState CompleteSeason(CareerState state)
     {
+        EnsureLifestyle(state);
         if (!state.SeasonComplete || state.ActiveEvent is not null) throw new InvalidOperationException("Termina los partidos y eventos pendientes antes de cerrar la temporada.");
         var position = state.Table.FindIndex(x => x.Club == state.CurrentClub) + 1;
+        if (state.Lifestyle.RecurringCostPerSeason > 0 && state.Player.Money >= state.Lifestyle.RecurringCostPerSeason)
+            AddLedger(state, "Mantenimiento", "Vivienda y lujos de temporada", -state.Lifestyle.RecurringCostPerSeason);
+        else if (state.Lifestyle.RecurringCostPerSeason > 0)
+            state.Timeline.Add("El mantenimiento de tus lujos se aplazó por saldo insuficiente.");
+        state.Lifestyle.Inventory.Clear();
         var seasonTitles = new List<string>();
         if (position == 1)
         {
@@ -144,9 +158,12 @@ public sealed class SimulationEngine
             state.Timeline.Add($"¡Campeones! {state.CurrentClub} gana {trophy}.");
             if (state.Contract is not null) AddLedger(state, "Prima", "Prima por título", state.Contract.TitleBonusEur);
         }
+        ResolveTournamentCampaigns(state, seasonTitles);
         var p = state.Player;
-        p.Age++; p.Overall = Math.Min(p.Potential, p.Overall + 1 + NextInt(state, 3));
         SaveLastSeasonPerformance(state);
+        ApplySeasonDevelopment(state, position, seasonTitles);
+        SimulateInternationalFinals(state);
+        p.Age++;
         var seasonAwards = DetermineIndividualAwards(state, position, seasonTitles);
         SimulateWorldSeason(state, position, seasonTitles);
         ApplyLeagueMovement(state, position);
@@ -154,7 +171,7 @@ public sealed class SimulationEngine
         if (playerClubProfile is not null) playerClubProfile.League = state.CurrentLeague;
         state.SeasonArchives.Add(new SeasonArchive
         {
-            Summary = new SeasonSummary { Season = state.Season, Club = state.CurrentClub, League = state.CurrentLeague, Appearances = p.LastSeasonAppearances, Goals = p.LastSeasonGoals, Assists = p.LastSeasonAssists, Minutes = state.SeasonMinutes - state.SeasonStartMinutes, AnnualSalaryEur = state.Contract?.AnnualGrossEur ?? 0, MarketValueEur = state.MarketProfile.EstimatedValueEur, NationalAppearances = p.NationalAppearances - state.SeasonStartNationalAppearances, Average = p.LastSeasonAverage, Titles = seasonTitles, FinalPosition = position, Awards = seasonAwards, Role = state.ClubRole, Milestones = state.CareerMilestones.Where(x => x.StartsWith($"{state.Season}:")).ToList() },
+            Summary = new SeasonSummary { Season = state.Season, Club = state.CurrentClub, League = state.CurrentLeague, Appearances = p.LastSeasonAppearances, Goals = p.LastSeasonGoals, Assists = p.LastSeasonAssists, Minutes = state.SeasonMinutes - state.SeasonStartMinutes, AnnualSalaryEur = state.Contract?.AnnualGrossEur ?? 0, MarketValueEur = state.MarketProfile.EstimatedValueEur, NationalAppearances = p.NationalAppearances - state.SeasonStartNationalAppearances, Average = p.LastSeasonAverage, StartOverall = state.SeasonStartOverall, EndOverall = p.Overall, OverallChange = p.LastSeasonOverallChange, Potential = p.Potential, DevelopmentTrajectory = p.DevelopmentTrajectory, DevelopmentNote = p.DevelopmentNote, Titles = seasonTitles, TournamentCampaigns = state.TournamentCampaigns.Select(CloneCampaign).ToList(), FinalPosition = position, Awards = seasonAwards, Role = state.ClubRole, Milestones = state.CareerMilestones.Where(x => x.StartsWith($"{state.Season}:")).ToList() },
             Events = state.CompletedEvents.ToList(), Timeline = state.Timeline.ToList(), Ledger = state.Ledger.Where(x => x.Season == state.Season).ToList()
         });
         if (p.Age >= 40)
@@ -172,6 +189,7 @@ public sealed class SimulationEngine
     private void InitializeSeason(CareerState state)
     {
         state.Fixtures = GenerateFixtures(state);
+        state.TournamentCampaigns = BuildTournamentCampaigns(state);
         state.Table = BuildTable(state);
         state.SeasonEventTarget = 4 + NextInt(state, 2);
         state.SeasonMiniGameId = SelectSeasonMiniGame(state);
@@ -186,6 +204,129 @@ public sealed class SimulationEngine
         state.SeasonStartRatingTotal = state.Player.RatingTotal;
         state.SeasonStartMinutes = state.SeasonMinutes;
         state.SeasonStartNationalAppearances = state.Player.NationalAppearances;
+        state.SeasonStartOverall = state.Player.Overall;
+    }
+
+    private List<TournamentCampaign> BuildTournamentCampaigns(CareerState state)
+    {
+        var league = League(state); var region = league.Region;
+        var domestic = region switch { "Inglaterra" => "FA Cup", "España" => "Copa del Rey", "Japón" => "Emperor's Cup", "México" => "Copa MX", "Argentina" => "Copa Argentina", "Brasil" => "Copa do Brasil", "Colombia" => "Copa Colombia", "Estados Unidos" => "US Open Cup", _ => "Copa nacional" };
+        var campaigns = new List<TournamentCampaign> { new() { Season = state.Season, Competition = domestic, Type = "Copa nacional", Format = "Eliminación directa · partido único", Qualified = true, Phase = "Ronda inicial", BestRound = "Ronda inicial" } };
+        var club = Club(state.CurrentClub)!;
+        var continental = region switch { "Inglaterra" or "España" => "UEFA Champions League", "México" or "Estados Unidos" => "Concacaf Champions Cup", "Argentina" or "Brasil" or "Colombia" => "Copa Libertadores", "Japón" => "AFC Champions League Elite", _ => "" };
+        var qualifies = club.Prestige >= league.Prestige - 8 || state.Player.LastSeasonAverage >= 7.05 || state.Player.Reputation >= 45;
+        if (!string.IsNullOrEmpty(continental)) campaigns.Add(new TournamentCampaign { Season = state.Season, Competition = continental, Type = "Continental", Format = "Fase liga/grupos y eliminatorias", Qualified = qualifies, Phase = qualifies ? "Fase de grupos" : "No clasificado", BestRound = qualifies ? "Fase de grupos" : "No clasificado" });
+        return campaigns;
+    }
+
+    private void ResolveTournamentCampaigns(CareerState state, List<string> titles)
+    {
+        var strength = (Club(state.CurrentClub)?.Prestige ?? 50) + state.Player.Overall / 5 + state.Player.Form / 10;
+        foreach (var campaign in state.TournamentCampaigns.Where(x => x.Qualified && x.Phase != "Eliminado"))
+        {
+            var run = Math.Clamp((int)Math.Floor((strength + NextInt(state, 35) - 52) / 12d), 0, campaign.Type == "Continental" ? 5 : 4);
+            campaign.Played += 1 + run; campaign.Wins += Math.Max(0, run - 1); campaign.Goals += Math.Max(0, run + NextInt(state, 5));
+            campaign.BestRound = run switch { 0 => "Ronda inicial", 1 => "Octavos", 2 => "Cuartos de final", 3 => "Semifinal", _ => "Final" };
+            campaign.Phase = campaign.BestRound;
+            campaign.KeyMatches = Enumerable.Range(0, Math.Min(3, campaign.Played)).Select(i => $"{campaign.Competition}: {campaign.BestRound} · partido {i + 1}").ToList();
+            if (run >= (campaign.Type == "Continental" ? 5 : 4))
+            {
+                campaign.Champion = state.CurrentClub; campaign.Phase = "Campeón"; campaign.BestRound = "Campeón";
+                campaign.PrizeEur = League(state).MarketScaleEur * (campaign.Type == "Continental" ? .04m : .012m);
+                titles.Add($"{campaign.Competition} {state.Season}"); state.Trophies.Add(titles[^1]); AddLedger(state, "Prima", $"Premio por {campaign.Competition}", campaign.PrizeEur);
+                state.Timeline.Add($"¡Campeones! {state.CurrentClub} gana {campaign.Competition}.");
+            }
+            else if (run >= 3) campaign.RunnerUp = "Rival simulado";
+        }
+    }
+
+    private SeasonEvent? CreateTournamentKeyEvent(CareerState state)
+    {
+        var eligible = state.TournamentCampaigns
+            .Where(x => x.Qualified && !x.KeyMomentPlayed && x.Champion is null)
+            .OrderBy(x => x.Type == "Copa nacional" ? 0 : 1)
+            .ToList();
+        if (eligible.Count == 0) return null;
+        var matchdays = Math.Max(1, MatchdayCount(state));
+        var campaign = eligible.FirstOrDefault(x => state.CurrentMatchday >= (x.Type == "Copa nacional" ? matchdays / 3 : matchdays * 2 / 3));
+        if (campaign is null) return null;
+
+        var ownPrestige = Club(state.CurrentClub)?.Prestige ?? 50;
+        var opponents = state.WorldClubs.Where(x => x.Club != state.CurrentClub)
+            .OrderBy(x => Math.Abs(x.SquadStrength - ownPrestige) + NextInt(state, 18)).Take(8).ToList();
+        var rival = opponents.Count == 0 ? LeagueTeams(state).First(x => x != state.CurrentClub) : opponents[NextInt(state, opponents.Count)].Club;
+        var home = Next(state) >= .5;
+        var fixture = new MatchFixture { Matchday = state.CurrentMatchday, Competition = campaign.Competition, Home = home ? state.CurrentClub : rival, Away = home ? rival : state.CurrentClub };
+        state.Fixtures.Add(fixture);
+        var matchEvent = CreateMatchEvent(state, fixture);
+        matchEvent.Id = $"tournament-{campaign.Id}-{fixture.Id}";
+        matchEvent.Title = $"{campaign.Competition}: noche decisiva";
+        matchEvent.Category = campaign.Type;
+        matchEvent.Description = $"{campaign.Format}. {campaign.Competition} no se resuelve en automático: tu acción puede inclinar esta eliminatoria ante {rival}.";
+        matchEvent.Match!.Stakes = campaign.Type == "Continental"
+            ? "Una buena actuación eleva tu prestigio internacional y el interés de clubes extranjeros."
+            : "La copa nacional ofrece un título real y un camino alternativo hacia Europa o el continente.";
+        matchEvent.Match.IsDecisive = true;
+        state.Timeline.Add($"{campaign.Competition}: momento clave ante {rival}.");
+        return matchEvent;
+    }
+
+    private void ResolveTournamentKeyMoment(CareerState state, MatchFixture fixture, bool actionSuccess)
+    {
+        var campaign = state.TournamentCampaigns.FirstOrDefault(x => x.Competition == fixture.Competition);
+        if (campaign is null || campaign.KeyMomentPlayed) return;
+        campaign.KeyMomentPlayed = true;
+        campaign.Played++;
+        var home = fixture.Home == state.CurrentClub;
+        var ownGoals = home ? fixture.HomeGoals ?? 0 : fixture.AwayGoals ?? 0;
+        var rivalGoals = home ? fixture.AwayGoals ?? 0 : fixture.HomeGoals ?? 0;
+        campaign.Goals += ownGoals;
+        var progressed = ownGoals > rivalGoals || (ownGoals == rivalGoals && actionSuccess);
+        if (progressed)
+        {
+            campaign.Wins++;
+            campaign.Phase = campaign.Type == "Continental" ? "Clasificado a eliminatorias" : "Octavos de final";
+            campaign.BestRound = campaign.Phase;
+            campaign.KeyMatches.Add($"{state.CurrentClub} {ownGoals}-{rivalGoals} {(fixture.Home == state.CurrentClub ? fixture.Away : fixture.Home)} · avanzaste");
+            state.Player.Reputation = Cap(state.Player.Reputation + (campaign.Type == "Continental" ? 3 : 2));
+        }
+        else
+        {
+            campaign.Phase = "Eliminado";
+            campaign.BestRound = "Eliminado en momento clave";
+            campaign.KeyMatches.Add($"{state.CurrentClub} {ownGoals}-{rivalGoals} {(fixture.Home == state.CurrentClub ? fixture.Away : fixture.Home)} · eliminado");
+        }
+    }
+
+    private static TournamentCampaign CloneCampaign(TournamentCampaign source) => new()
+    {
+        Id = source.Id, Season = source.Season, Competition = source.Competition, Type = source.Type, Format = source.Format,
+        Phase = source.Phase, Qualified = source.Qualified, KeyMomentPlayed = source.KeyMomentPlayed, Played = source.Played,
+        Wins = source.Wins, Goals = source.Goals, BestRound = source.BestRound, Champion = source.Champion,
+        RunnerUp = source.RunnerUp, PrizeEur = source.PrizeEur, KeyMatches = source.KeyMatches.ToList()
+    };
+
+    private void SimulateInternationalFinals(CareerState state)
+    {
+        var p = state.Player; var team = state.NationalTeam;
+        if (team is null || p.Age < 17 || state.NationalHistory.Any(x => x.Season == state.Season && x.Competition.Contains("Copa"))) return;
+        var competition = state.Season % 4 == 2 ? "Copa del Mundo · 12 grupos y dieciseisavos" : team.Confederation switch
+        {
+            "CONCACAF" => "Copa Oro · grupos y eliminatorias",
+            "CONMEBOL" => "Copa América · grupos y eliminatorias",
+            "UEFA" => state.Season % 2 == 0 ? "Eurocopa · grupos y eliminatorias" : "UEFA Nations League",
+            "AFC" => "Copa Asia · 24 selecciones",
+            "CAF" => "Copa Africana de Naciones · 24 selecciones",
+            _ => "Torneo internacional"
+        };
+        var chance = Math.Clamp(.12 + p.Reputation / 180d + Math.Max(0, p.Overall - team.Strength + 10) / 110d + (p.LastSeasonAverage >= 6.8 ? .15 : 0), .12, .86);
+        if (Next(state) > chance) return;
+        var appearances = 2 + NextInt(state, 6); var deepRun = Next(state) < Math.Clamp(team.Strength / 115d + p.Overall / 260d, .28, .88);
+        var goals = Enumerable.Range(0, appearances).Count(_ => Next(state) < (p.Position is "Delantero" or "Extremo" ? .28 : p.Position == "Mediocampista" ? .13 : .03));
+        var outcome = deepRun ? "semifinal o final" : "fase de grupos u octavos";
+        p.NationalAppearances += appearances; p.NationalGoals += goals; p.Reputation = Cap(p.Reputation + (deepRun ? 7 : 3)); p.Morale = Cap(p.Morale + (deepRun ? 6 : 2)); p.Energy = Floor(p.Energy - appearances * 2);
+        state.NationalHistory.Add(new NationalCampaign { Season = state.Season, Country = team.Country, Competition = competition, Appearances = appearances, Goals = goals, Outcome = outcome });
+        state.CareerMilestones.Add($"{state.Season}: {team.Country} te lleva a {competition}; {appearances} PJ, {goals} goles, {outcome}.");
     }
 
     private List<MatchFixture> GenerateFixtures(CareerState state)
@@ -489,6 +630,176 @@ public sealed class SimulationEngine
         return state;
     }
 
+    public CareerState UseActivity(CareerState state, string activityId)
+    {
+        EnsureLifestyle(state);
+        if (state.IsRetired) throw new InvalidOperationException("La carrera ya terminó.");
+        var key = activityId.Split(':')[0];
+        if (state.ActivityCooldowns.TryGetValue(key, out var availableAt) && availableAt > state.CurrentMatchday)
+            throw new InvalidOperationException($"Esta actividad estará disponible después de la jornada {availableAt}.");
+        var p = state.Player;
+        if (activityId.StartsWith("use:")) return UseConsumable(state, activityId[4..]);
+        if (activityId == "casino")
+        {
+            if (p.Age < 18) throw new InvalidOperationException("El casino ficticio solo está disponible para mayores de edad.");
+            state.ActivityCooldowns[key] = state.CurrentMatchday + 2;
+            var game = SeasonMiniGames[12 + NextInt(state, 3)];
+            state.ActiveEvent = new SeasonEvent
+            {
+                Id = $"hub-casino-{state.Season}-{state.CurrentMatchday}", Category = "Ocio", Title = "Casino ficticio",
+                Description = "Entras con saldo estrictamente interno a la partida. Elige tu jugada: el riesgo y el resultado quedarán registrados.",
+                MiniGame = game, Challenge = CreateChallenge(state, game), IsHubActivity = true,
+                Options = [new EventOption { Id = "play", Label = "Jugar esta mano", Risk = "Suerte" }]
+            };
+            return state;
+        }
+        state.ActivityCooldowns[key] = state.CurrentMatchday + 2;
+        switch (activityId)
+        {
+            case "shop:recovery":
+                Spend(state, 350m, "Tienda", "Kit de recuperación"); p.Energy = Cap(p.Energy + 14); p.InjuryRisk = Floor(p.InjuryRisk - 8);
+                return CompleteActivity(state, "Kit de recuperación", "Compraste un kit de recuperación y llegas con mejores sensaciones al siguiente bloque.", [new() { Label = "Energía", Value = 14, Direction = "positive" }, new() { Label = "Riesgo lesión", Value = -8, Direction = "positive" }]);
+            case "shop:boots":
+                Spend(state, 900m, "Tienda", "Botas personalizadas"); AdjustAttribute(p, p.Position is "Defensa" ? "defending" : p.Position == "Portero" ? "goalkeeping" : "dribbling", 2); RecalculateOverall(p);
+                return CompleteActivity(state, "Botas personalizadas", "El material personalizado mejora tu confianza técnica y se adapta a tu posición.", [new() { Label = "Atributo clave", Value = 2, Direction = "positive" }]);
+            case "training":
+                Spend(state, 500m, "Preparación", "Sesión individual"); var focus = DevelopmentAttributes(p).First(); AdjustAttribute(p, focus, 2); p.Energy = Floor(p.Energy - 6); p.Morale = Cap(p.Morale + 2); RecalculateOverall(p);
+                return CompleteActivity(state, "Sesión individual", $"Trabajaste {PreseasonLabel(focus)} con un especialista. El progreso llega a costa de energía.", [new() { Label = PreseasonLabel(focus), Value = 2, Direction = "positive" }, new() { Label = "Energía", Value = -6, Direction = "negative" }]);
+            case "recovery":
+                p.Energy = Cap(p.Energy + 10); p.InjuryRisk = Floor(p.InjuryRisk - 6); p.Form = Floor(p.Form - 1);
+                return CompleteActivity(state, "Recuperación", "Priorizaste dormir, movilidad y fisioterapia; sacrificas un poco de ritmo para llegar sano.", [new() { Label = "Energía", Value = 10, Direction = "positive" }, new() { Label = "Riesgo lesión", Value = -6, Direction = "positive" }]);
+            case "agent":
+                Spend(state, 450m, "Agente", "Informe de mercado"); p.Reputation = Cap(p.Reputation + 2); p.MediaRelation = Cap(p.MediaRelation + 2); RefreshMarketProfile(state);
+                var scout = state.MarketProfile.ScoutingClubs.FirstOrDefault() ?? "clubes de tu escalón";
+                return CompleteActivity(state, "Reunión con agente", $"Tu agente actualizó tu dossier. {scout} aparece en el radar si mantienes el rendimiento.", [new() { Label = "Fama", Value = 2, Direction = "positive" }, new() { Label = "Mercado", Value = 1, Direction = "positive" }]);
+            case "social":
+                Spend(state, 180m, "Vida personal", "Plan social responsable"); p.Morale = Cap(p.Morale + 7); p.FansRelation = Cap(p.FansRelation + 2); p.Energy = Floor(p.Energy - 2);
+                return CompleteActivity(state, "Vida personal", "Desconectaste con responsabilidad y recuperaste confianza fuera del campo.", [new() { Label = "Moral", Value = 7, Direction = "positive" }, new() { Label = "Energía", Value = -2, Direction = "negative" }]);
+            case "nutrition":
+                Spend(state, ServiceCost(state, .018m), "Servicios", "Bloque de nutrición"); p.Energy = Cap(p.Energy + 6); state.Lifestyle.Wellbeing = Cap(state.Lifestyle.Wellbeing + 4);
+                return CompleteActivity(state, "Nutrición deportiva", "Un plan de alimentación mejora tu recuperación sin sustituir el entrenamiento.", [new() { Label = "Energía", Value = 6, Direction = "positive" }]);
+            case "psychology":
+                Spend(state, ServiceCost(state, .016m), "Servicios", "Psicología deportiva"); p.Morale = Cap(p.Morale + 8); p.MediaRelation = Cap(p.MediaRelation + 2);
+                return CompleteActivity(state, "Psicología deportiva", "Trabajaste foco y presión competitiva.", [new() { Label = "Moral", Value = 8, Direction = "positive" }]);
+            case "media":
+                Spend(state, ServiceCost(state, .022m), "Servicios", "Media training"); p.MediaRelation = Cap(p.MediaRelation + 7); p.Reputation = Cap(p.Reputation + 2); state.Lifestyle.PublicImage = Cap(state.Lifestyle.PublicImage + 5);
+                return CompleteActivity(state, "Media training", "Preparaste mensajes y entrevistas con un equipo profesional.", [new() { Label = "Medios", Value = 7, Direction = "positive" }, new() { Label = "Fama", Value = 2, Direction = "positive" }]);
+            default: throw new InvalidOperationException("La actividad no existe.");
+        }
+    }
+
+    public List<ShopProductQuote> ShopCatalog(CareerState state)
+    {
+        EnsureLifestyle(state);
+        var salary = state.Contract?.AnnualGrossEur ?? 30_000m;
+        var products = new (string Id, string Name, string Family, string Benefit, decimal Price, decimal Maintenance, bool Permanent)[]
+        {
+            ("recovery-kit","Kit de recuperación","Consumible","+14 energía · −8 riesgo",Math.Max(180m,salary*.004m),0,false),("sports-meal","Comida deportiva","Consumible","+7 energía",Math.Max(90m,salary*.002m),0,false),("sleep-guide","Sueño guiado","Consumible","+10 energía · −3 riesgo",Math.Max(110m,salary*.0025m),0,false),("preventive-wrap","Vendaje preventivo","Consumible","−9 riesgo",Math.Max(75m,salary*.0015m),0,false),("mobility","Sesión de movilidad","Consumible","+5 energía · −5 riesgo",Math.Max(130m,salary*.003m),0,false),
+            ("boots","Botas por perfil","Equipo","Mejora técnica pequeña",Math.Max(700m,salary*.016m),0,true),("gps","GPS de carga","Equipo","Prevención de lesión",Math.Max(900m,salary*.02m),0,true),("home-gym","Gimnasio doméstico","Equipo","+5 bienestar",Math.Max(2200m,salary*.05m),0,true),("video","Análisis de vídeo","Equipo","+3 relación técnico",Math.Max(650m,salary*.014m),0,true),
+            ("apartment","Vivienda cómoda","Lujo","Confort y moral",Math.Max(4000m,salary*.09m),Math.Max(500m,salary*.01m),true),("car","Auto personal","Lujo","Evento situacional",Math.Max(6500m,salary*.14m),Math.Max(700m,salary*.015m),true),("style","Estilo e imagen","Lujo","Imagen y fama",Math.Max(1300m,salary*.028m),0,true)
+        };
+        return products.Select(x => new ShopProductQuote { Id=x.Id, Name=x.Name, Family=x.Family, Benefit=x.Benefit, PriceEur=x.Price, MaintenanceEur=x.Maintenance, Inventory=state.Lifestyle.Inventory.GetValueOrDefault(x.Id), Owned=state.Lifestyle.PermanentPurchases.Contains(x.Id), CanBuy=state.Player.Money >= x.Price && (!x.Permanent || !state.Lifestyle.PermanentPurchases.Contains(x.Id)) && (x.Permanent || state.Lifestyle.Inventory.GetValueOrDefault(x.Id) < 3) }).ToList();
+    }
+
+    public CasinoQuote CasinoQuote(CareerState state, string game, int betPercent)
+    {
+        EnsureLifestyle(state); var valid = game is "dice" or "roulette" or "blackjack" && betPercent is 1 or 2 or 4;
+        var bet = valid ? Math.Floor(state.Player.Money * betPercent / 100m) : 0m;
+        var reason = !valid ? "Selección inválida" : state.Player.Age < 18 ? "Disponible a los 18 años" : state.CasinoSession is not null ? "Ya tienes una sesión abierta" : state.ActivityCooldowns.GetValueOrDefault("casino") > state.CurrentMatchday ? $"Disponible después de jornada {state.ActivityCooldowns["casino"]}" : bet < 10m ? "Saldo mínimo €1,000" : null;
+        return new CasinoQuote { Game=game, BetPercent=betPercent, BetEur=bet, OpeningBalanceEur=state.Player.Money, SessionLossLimitEur=Math.Min(5000m,state.Player.Money*.10m), Payout=game == "roulette" ? "Rojo/negro: +1× · verde: +14×" : game == "dice" ? "Acierto: +1×" : "Victoria: +1× · empate: €0", CanOpen=reason is null, BlockReason=reason };
+    }
+
+    public CareerState BuyProduct(CareerState state, string productId)
+    {
+        EnsureLifestyle(state);
+        var p = state.Player; var salary = state.Contract?.AnnualGrossEur ?? 30_000m;
+        var products = new Dictionary<string, (string name, string family, decimal price, bool permanent, decimal upkeep)>
+        {
+            ["recovery-kit"]=("Kit de recuperación","Consumible",Math.Max(180m,salary*.004m),false,0), ["sports-meal"]=("Comida deportiva","Consumible",Math.Max(90m,salary*.002m),false,0), ["sleep-guide"]=("Sueño guiado","Consumible",Math.Max(110m,salary*.0025m),false,0), ["preventive-wrap"]=("Vendaje preventivo","Consumible",Math.Max(75m,salary*.0015m),false,0), ["mobility"]=("Sesión de movilidad","Consumible",Math.Max(130m,salary*.003m),false,0),
+            ["boots"]=("Botas por perfil","Equipo",Math.Max(700m,salary*.016m),true,0), ["gps"]=("GPS de carga","Equipo",Math.Max(900m,salary*.02m),true,0), ["home-gym"]=("Gimnasio doméstico","Equipo",Math.Max(2200m,salary*.05m),true,0), ["video"]=("Análisis de vídeo","Equipo",Math.Max(650m,salary*.014m),true,0),
+            ["apartment"]=("Vivienda cómoda","Lujo",Math.Max(4000m,salary*.09m),true,Math.Max(500m,salary*.01m)), ["car"]=("Auto personal","Lujo",Math.Max(6500m,salary*.14m),true,Math.Max(700m,salary*.015m)), ["style"]=("Estilo e imagen","Lujo",Math.Max(1300m,salary*.028m),true,0)
+        };
+        if (!products.TryGetValue(productId, out var product)) throw new InvalidOperationException("Ese producto no existe.");
+        if (product.permanent && state.Lifestyle.PermanentPurchases.Contains(productId)) throw new InvalidOperationException("Ya tienes esta compra permanente.");
+        if (!product.permanent && state.Lifestyle.Inventory.GetValueOrDefault(productId) >= 3) throw new InvalidOperationException("Límite de tres unidades por consumible.");
+        Spend(state, product.price, "Tienda · " + product.family, product.name);
+        if (product.permanent) { state.Lifestyle.PermanentPurchases.Add(productId); state.Lifestyle.RecurringCostPerSeason += product.upkeep; ApplyPurchaseEffect(state, productId); }
+        else state.Lifestyle.Inventory[productId] = state.Lifestyle.Inventory.GetValueOrDefault(productId) + 1;
+        LogLifestyle(state, product.name, product.price, product.permanent ? "Compra permanente" : "Añadido al inventario");
+        return CompleteActivity(state, product.name, product.permanent ? "Compra registrada: sus beneficios son situacionales y el mantenimiento se cobrará al inicio de la próxima temporada." : "Consumible guardado. Caduca al finalizar la temporada.", [new() { Label = "Saldo", Value = -(int)product.price, Direction = "negative" }]);
+    }
+
+    public CareerState OpenCasino(CareerState state, string game, int betPercent)
+    {
+        EnsureLifestyle(state); if (state.Player.Age < 18) throw new InvalidOperationException("El casino ficticio es solo para mayores de 18 años.");
+        if (state.CasinoSession is not null) throw new InvalidOperationException("Ya hay una sesión de casino activa.");
+        if (game is not ("dice" or "roulette" or "blackjack") || betPercent is not (1 or 2 or 4)) throw new InvalidOperationException("Elige un juego y apuesta predefinida válida.");
+        if (state.ActivityCooldowns.GetValueOrDefault("casino") > state.CurrentMatchday) throw new InvalidOperationException("El casino está en enfriamiento durante dos jornadas.");
+        var bet = Math.Floor(state.Player.Money * betPercent / 100m); if (bet < 10m) throw new InvalidOperationException("Necesitas al menos €1,000 de saldo para esta mesa.");
+        state.CasinoSession = new CasinoSession { Game = game, OpeningBalance = state.Player.Money, LossLimit = Math.Min(5000m, state.Player.Money * .10m), BetEur = bet };
+        return state;
+    }
+
+    public CareerState CasinoAction(CareerState state, string action)
+    {
+        EnsureLifestyle(state); var s = state.CasinoSession ?? throw new InvalidOperationException("No hay una sesión de casino activa.");
+        if (action == "exit") { CloseCasino(state); return state; }
+        if (s.HandsPlayed >= 5 || -s.NetResult >= s.LossLimit) throw new InvalidOperationException("La sesión alcanzó su límite; sal de la mesa.");
+        if (s.Game == "blackjack") return Blackjack(state, action);
+        if (action is not ("high" or "low" or "red" or "black" or "green")) throw new InvalidOperationException("La elección no pertenece a esta mesa.");
+        var roll = s.Game == "dice" ? 1 + NextInt(state, 6) : NextInt(state, 37); var win = s.Game == "dice" ? (action == "high" ? roll >= 4 : roll <= 3) : action == "green" ? roll == 0 : action == "red" ? roll != 0 && (roll % 2 == 1) : roll != 0 && roll % 2 == 0;
+        var multiplier = action == "green" ? 14m : 1m; FinishCasinoHand(state, win ? s.BetEur * multiplier : -s.BetEur, win ? "Victoria" : "Derrota", s.Game == "dice" ? $"Dado: {roll}. Elegiste {action}." : $"Ruleta: {roll}. Elegiste {action}."); return state;
+    }
+
+    private CareerState UseConsumable(CareerState state, string item)
+    {
+        if (state.Lifestyle.Inventory.GetValueOrDefault(item) < 1) throw new InvalidOperationException("No tienes ese consumible en el inventario.");
+        var p = state.Player; state.Lifestyle.Inventory[item]--;
+        var (energy, risk, morale) = item switch { "recovery-kit" => (14, -8, 0), "sports-meal" => (7, 0, 1), "sleep-guide" => (10, -3, 0), "preventive-wrap" => (0, -9, 0), "mobility" => (5, -5, 0), _ => throw new InvalidOperationException("Consumible inválido.") };
+        p.Energy = Cap(p.Energy + energy); p.InjuryRisk = Floor(p.InjuryRisk + risk); p.Morale = Cap(p.Morale + morale); LogLifestyle(state, item, 0, "Consumido");
+        return CompleteActivity(state, "Consumible usado", "Aplicaste un recurso de esta temporada; el efecto es moderado y no se acumula indefinidamente.", [new() { Label = "Energía", Value = energy, Direction = "positive" }, new() { Label = "Riesgo lesión", Value = risk, Direction = "positive" }]);
+    }
+    private static decimal ServiceCost(CareerState state, decimal ratio) => Math.Max(150m, (state.Contract?.AnnualGrossEur ?? 30_000m) * ratio);
+    private static void EnsureLifestyle(CareerState state) { state.Lifestyle ??= new LifestyleProfile(); state.Lifestyle.Inventory ??= []; state.Lifestyle.PermanentPurchases ??= []; state.LifestyleHistory ??= []; state.CasinoHistory ??= []; state.ActivityCooldowns ??= []; }
+    private static void LogLifestyle(CareerState state, string name, decimal cost, string result) => state.LifestyleHistory.Add(new LifestyleActivityRecord { Season = state.Season, Matchday = state.CurrentMatchday, Name = name, CostEur = cost, Result = result });
+    private void ApplyPurchaseEffect(CareerState state, string id)
+    {
+        var p = state.Player;
+        if (id == "boots") { AdjustAttribute(p, p.Position == "Portero" ? "goalkeeping" : "dribbling", 1); RecalculateOverall(p); }
+        else if (id == "gps") p.InjuryRisk = Floor(p.InjuryRisk - 3);
+        else if (id == "home-gym") state.Lifestyle.Wellbeing = Cap(state.Lifestyle.Wellbeing + 5);
+        else if (id == "video") p.CoachRelation = Cap(p.CoachRelation + 3);
+        else if (id == "apartment") { p.Morale = Cap(p.Morale + 4); state.Lifestyle.Wellbeing = Cap(state.Lifestyle.Wellbeing + 5); }
+        else if (id == "style") { p.Reputation = Cap(p.Reputation + 2); state.Lifestyle.PublicImage = Cap(state.Lifestyle.PublicImage + 6); }
+    }
+    private CareerState Blackjack(CareerState state, string action)
+    {
+        var s = state.CasinoSession!;
+        if (!s.HandInProgress) { if (action != "deal") throw new InvalidOperationException("Reparte la mano primero."); s.PlayerCards = [Card(state), Card(state)]; s.DealerCards = [Card(state), Card(state)]; s.HandInProgress = true; return state; }
+        if (action == "hit") { s.PlayerCards.Add(Card(state)); if (HandValue(s.PlayerCards) > 21) FinishCasinoHand(state, -s.BetEur, "Exceso de 21", $"Tu mano sumó {HandValue(s.PlayerCards)}."); return state; }
+        if (action == "double") { if (state.Player.Money < s.BetEur * 2) throw new InvalidOperationException("No hay saldo suficiente para doblar."); s.BetEur *= 2; s.PlayerCards.Add(Card(state)); return SettleBlackjack(state); }
+        if (action == "stand") return SettleBlackjack(state);
+        throw new InvalidOperationException("Acción de blackjack inválida.");
+    }
+    private CareerState SettleBlackjack(CareerState state) { var s = state.CasinoSession!; while (HandValue(s.DealerCards) < 17) s.DealerCards.Add(Card(state)); var you = HandValue(s.PlayerCards); var dealer = HandValue(s.DealerCards); var net = you > 21 ? -s.BetEur : dealer > 21 || you > dealer ? s.BetEur : you == dealer ? 0 : -s.BetEur; FinishCasinoHand(state, net, net > 0 ? "Victoria" : net == 0 ? "Empate" : "Derrota", $"Tu mano {you}; crupier {dealer}."); return state; }
+    private static int Card(CareerState state) => 1 + NextInt(state, 10); private static int HandValue(List<int> cards) => cards.Sum();
+    private void FinishCasinoHand(CareerState state, decimal net, string result, string detail)
+    { var s = state.CasinoSession!; s.HandsPlayed++; s.NetResult += net; s.HandInProgress = false; AddLedger(state, "Casino ficticio", $"{s.Game}: {result}", net); state.CasinoHistory.Add(new CasinoHand { Season = state.Season, Game = s.Game, BetEur = s.BetEur, NetEur = net, Result = result, Detail = detail }); state.LastResolution = new EventResolution { Headline = "Casino ficticio", Result = result, Detail = detail + " Dinero ficticio de la partida.", Effects = [new() { Label = "Saldo", Value = (int)net, Direction = net >= 0 ? "positive" : "negative" }] }; }
+    private void CloseCasino(CareerState state) { var s = state.CasinoSession!; state.ActivityCooldowns["casino"] = state.CurrentMatchday + 2; if (s.NetResult < 0 || state.CasinoHistory.Count(x => x.Season == state.Season) >= 8) { state.Player.Morale = Floor(state.Player.Morale - 2); state.Player.Energy = Floor(state.Player.Energy - 2); state.Lifestyle.Discipline = Floor(state.Lifestyle.Discipline - 3); state.Lifestyle.PublicImage = Floor(state.Lifestyle.PublicImage - 2); } state.Timeline.Add($"Casino ficticio: {s.HandsPlayed} manos, resultado €{s.NetResult:N0}."); state.CasinoSession = null; }
+
+    private static void Spend(CareerState state, decimal amount, string category, string description)
+    {
+        if (state.Player.Money < amount) throw new InvalidOperationException("No tienes saldo suficiente para esta actividad.");
+        AddLedger(state, category, description, -amount);
+    }
+
+    private static CareerState CompleteActivity(CareerState state, string title, string detail, List<EventEffect> effects)
+    {
+        state.LastResolution = new EventResolution { Headline = title, Result = "Actividad completada", Detail = detail, Effects = effects };
+        state.Timeline.Add(detail);
+        return state;
+    }
+
     private bool ShouldCreateWorldClubEvent(CareerState state, bool matchSuccess)
     {
         var profile = state.WorldClubs.FirstOrDefault(x => x.Club == state.CurrentClub);
@@ -713,6 +1024,81 @@ public sealed class SimulationEngine
         p.LastSeasonAverage = p.LastSeasonAppearances == 0 ? 5.8 : ratings / p.LastSeasonAppearances;
     }
 
+    private void ApplySeasonDevelopment(CareerState state, int leaguePosition, List<string> seasonTitles)
+    {
+        var p = state.Player;
+        var start = state.SeasonStartOverall is >= 40 and <= 99 ? state.SeasonStartOverall : p.Overall;
+        var scheduledMatches = Math.Max(1, MatchdayCount(state));
+        var participation = p.LastSeasonAppearances / (double)scheduledMatches;
+        var contributions = p.LastSeasonGoals + p.LastSeasonAssists;
+        var production = p.Position switch
+        {
+            "Delantero" or "Extremo" => contributions >= Math.Max(8, scheduledMatches / 2),
+            "Mediocampista" => contributions >= Math.Max(6, scheduledMatches / 3),
+            "Defensa" or "Portero" => leaguePosition <= Math.Max(6, League(state).ClubNames.Count / 3),
+            _ => false
+        };
+        var breakout = p.Age <= 21 && participation >= .55 && p.LastSeasonAverage >= 7.15 && (production || seasonTitles.Count > 0);
+        var excellent = participation >= .48 && p.LastSeasonAverage >= 6.8 && (production || leaguePosition <= 5);
+        var good = participation >= .35 && p.LastSeasonAverage >= 6.35;
+        var poor = p.LastSeasonAppearances > 0 && p.LastSeasonAverage < 5.65 || p.Age >= 20 && participation < .16;
+        var severe = p.InjuryRisk >= 72 || p.LastSeasonAppearances == 0 && p.Age >= 22;
+
+        var potentialChange = breakout ? 4 + NextInt(state, 4)
+            : excellent ? 2 + NextInt(state, 3)
+            : good && p.Age <= 24 ? 1 + NextInt(state, 2)
+            : severe ? -2 - NextInt(state, 2)
+            : poor ? -1 : 0;
+        p.Potential = Math.Clamp(Math.Max(p.Overall, p.Potential + potentialChange), 60, 99);
+
+        var requestedDelta = breakout ? 5 + NextInt(state, 4)
+            : excellent ? 3 + NextInt(state, 3)
+            : good ? 1 + NextInt(state, 3)
+            : severe ? -2 - NextInt(state, 3)
+            : poor ? -1 - NextInt(state, 3)
+            : p.Age <= 20 && participation >= .2 ? NextInt(state, 2)
+            : 0;
+        if (p.Age >= 30 && !breakout && !excellent) requestedDelta = Math.Min(requestedDelta, p.Age >= 34 ? -1 - NextInt(state, 2) : 0);
+
+        var target = Math.Clamp(start + requestedDelta, 40, p.Potential);
+        ShiftOverallThroughAttributes(p, target);
+        p.LastSeasonOverallChange = p.Overall - start;
+        p.DevelopmentTrajectory = p.Overall >= 90 ? "Clase mundial" : p.Overall >= 82 ? "Nivel élite" : p.LastSeasonOverallChange >= 5 ? "Salto de nivel" : p.LastSeasonOverallChange >= 2 ? "En crecimiento" : p.LastSeasonOverallChange <= -3 ? "Carrera en riesgo" : p.LastSeasonOverallChange < 0 ? "En declive" : "Estable";
+        p.DevelopmentNote = p.LastSeasonOverallChange switch
+        {
+            >= 5 => $"Temporada de impacto: tus actuaciones elevan la media de {start} a {p.Overall} y abren un techo de {p.Potential}.",
+            >= 2 => $"La regularidad transforma rendimiento en atributos: {start} → {p.Overall}; tu proyección llega a {p.Potential}.",
+            > 0 => $"Sumaste progreso real en atributos clave. Media {start} → {p.Overall}.",
+            <= -3 => $"La falta de continuidad o el desgaste golpearon tu nivel: {start} → {p.Overall}. Aún puedes reconstruirte.",
+            < 0 => $"La temporada frenó tu evolución: {start} → {p.Overall}. Recuperar minutos será decisivo.",
+            _ => $"Tu nivel se mantuvo en {p.Overall}; una campaña más dominante puede abrir el siguiente salto."
+        };
+        state.CareerMilestones.Add($"{state.Season}: {p.DevelopmentTrajectory}. {p.DevelopmentNote}");
+    }
+
+    private static void ShiftOverallThroughAttributes(Player p, int target)
+    {
+        var attributes = DevelopmentAttributes(p).ToList();
+        var direction = target >= p.Overall ? 1 : -1;
+        var guard = 0;
+        while ((direction > 0 ? p.Overall < target : p.Overall > target) && guard++ < 360)
+        {
+            var attribute = attributes[guard % attributes.Count];
+            AdjustAttribute(p, attribute, direction);
+            RecalculateOverall(p);
+            if (direction > 0 && p.Overall >= p.Potential) break;
+        }
+    }
+
+    private static IEnumerable<string> DevelopmentAttributes(Player p) => p.Position switch
+    {
+        "Portero" => new[] { "goalkeeping", "goalkeeping", "goalkeeping", "physical", "passing", "goalkeeping", "dribbling" },
+        "Defensa" => new[] { "defending", "defending", "physical", "defending", "pace", "passing", "dribbling" },
+        "Mediocampista" => new[] { "passing", "dribbling", "passing", "pace", "defending", "shooting", "physical" },
+        "Extremo" => new[] { "pace", "dribbling", "shooting", "pace", "dribbling", "passing", "physical" },
+        _ => new[] { "shooting", "shooting", "pace", "dribbling", "shooting", "physical", "passing" }
+    };
+
     private List<TableRow> BuildTable(CareerState state)
     {
         var teams = LeagueTeams(state);
@@ -734,7 +1120,7 @@ public sealed class SimulationEngine
     private void UpdateTable(CareerState state)
     {
         var rows = BuildTable(state).ToDictionary(r => r.Club);
-        foreach (var fixture in state.Fixtures.Where(f => f.IsPlayed && f.HomeGoals.HasValue && f.AwayGoals.HasValue))
+        foreach (var fixture in state.Fixtures.Where(f => f.Competition == state.CurrentLeague && f.IsPlayed && f.HomeGoals.HasValue && f.AwayGoals.HasValue))
         {
             var home = rows[fixture.Home]; var away = rows[fixture.Away]; var hg = fixture.HomeGoals!.Value; var ag = fixture.AwayGoals!.Value;
             home.Played++; away.Played++; home.GoalsFor += hg; home.GoalsAgainst += ag; away.GoalsFor += ag; away.GoalsAgainst += hg;
@@ -771,13 +1157,15 @@ public sealed class SimulationEngine
             .Where(x => x.Gap >= 0 || (exceptional && x.Gap >= -3))
             .Where(x => x.Compatibility >= 48)
             .Where(x => x.Club.SquadStrength <= currentStrength + 13 || p.LastSeasonAverage >= 7.2 || exceptional)
-            .OrderByDescending(x => x.Compatibility + x.Gap * 4 + Math.Min(10, x.Club.SquadStrength - currentStrength))
-            .Take(3).ToList();
+            .OrderByDescending(x => x.Compatibility + x.Gap * 4 + Math.Min(10, x.Club.SquadStrength - currentStrength) + NextInt(state, 28))
+            .Take(5).ToList();
         return eligible.Select(x =>
         {
-            var club = Club(x.Club.Club)!; var salary = AnnualSalary(state, club);
+            var club = Club(x.Club.Club)!; var rival = club.League == state.CurrentLeague && Math.Abs(club.Prestige - (current?.Prestige ?? 50)) <= 18;
+            var salary = AnnualSalary(state, club) * (rival ? 1.15m : 1m);
             var role = p.Overall >= x.Club.SquadStrength + 3 ? "Titular" : p.Overall >= x.Club.SquadStrength - 3 ? "Rotación" : "Competencia alta";
-            return new TransferOffer { Club = club.Name, League = club.League, Salary = salary, MonthlyNetEur = Math.Round(salary * NetRate(club.League) / 12m), SigningBonusEur = Math.Round(salary * .08m), Role = role, ClubBudgetEur = x.Club.TransferBudgetEur, ClubStrength = x.Club.SquadStrength, RequiredOverall = x.Required, Compatibility = x.Compatibility, MarketTier = MarketTier(x.Club.SquadStrength), Need = $"Busca {p.Position.ToLowerInvariant()} con proyección", Reason = TransferReason(state, x.Club, exceptional) };
+            var years = 2 + NextInt(state, 4);
+            return new TransferOffer { Club = club.Name, League = club.League, Salary = salary, MonthlyNetEur = Math.Round(salary * NetRate(club.League) / 12m), SigningBonusEur = Math.Round(salary * .08m), Role = role, ClubBudgetEur = x.Club.TransferBudgetEur, ClubStrength = x.Club.SquadStrength, RequiredOverall = x.Required, Compatibility = x.Compatibility, MarketTier = MarketTier(x.Club.SquadStrength), Need = $"Busca {p.Position.ToLowerInvariant()} con proyección", Reason = rival ? "Rival directo: ofrece más salario, pero la afición reaccionará" : TransferReason(state, x.Club, exceptional), IsRival = rival, ContractYears = years, ReleaseClauseEur = Math.Round(salary * years * 1.8m), Adaptation = club.League == state.CurrentLeague ? "Inmediata" : club.Prestige >= currentStrength + 10 ? "Exigente" : "Normal" };
         }).ToList();
     }
 
@@ -859,11 +1247,19 @@ public sealed class SimulationEngine
         if (optionId == "renew") destination = Club(state.CurrentClub)!;
         else if (optionId == "market") destination = _world.Clubs.Where(c => c.Name != state.CurrentClub).OrderBy(c => Math.Abs(c.Prestige - Club(state.CurrentClub)!.Prestige)).First();
         else destination = _world.Clubs.FirstOrDefault(c => c.Name == optionId) ?? throw new InvalidOperationException("Club no válido.");
+        var previousClub = Club(state.CurrentClub)!;
         var moved = destination.Name != state.CurrentClub;
         state.CurrentClub = destination.Name; state.CurrentLeague = destination.League;
         state.Contract = CreateContract(state, destination, moved ? "Nuevo fichaje" : "Renovado");
         AddLedger(state, "Firma", $"Bono de firma con {destination.Name}", state.Contract.SigningBonusEur);
-        active.Outcome = moved ? $"Firmaste por {destination.Name}." : $"Renovaste con {destination.Name}.";
+        var rivalMove = moved && destination.League == previousClub.League && Math.Abs(destination.Prestige - previousClub.Prestige) <= 18;
+        if (rivalMove) { state.Player.FansRelation = Floor(state.Player.FansRelation - 12); state.Player.MediaRelation = Floor(state.Player.MediaRelation - 5); state.Player.Morale = Floor(state.Player.Morale - 2); }
+        var adaptationMessage = destination.League == previousClub.League ? "inmediata" : "a una nueva liga";
+        active.Outcome = moved
+            ? rivalMove
+                ? $"Firmaste por el rival {destination.Name}. La afición de {previousClub.Name} toma la decisión como una ruptura."
+                : $"Firmaste por {destination.Name}; comienza una adaptación {adaptationMessage}."
+            : $"Renovaste con {destination.Name}.";
         active.Resolution = new EventResolution { Headline = active.Title, Result = moved ? "Traspaso acordado" : "Renovación acordada", Detail = $"Contrato anual por €{state.Contract.AnnualGrossEur:N0} brutos; depósito mensual neto de €{state.Contract.MonthlyNetEur:N0}.", Effects = [new EventEffect { Label = "Bono de firma", Value = (int)state.Contract.SigningBonusEur, Direction = "positive" }] };
         state.LastResolution = active.Resolution; state.CompletedEvents.Add(active); state.Timeline.Add(active.Outcome);
         state.Season++; state.EventIndex = 0; state.CurrentMatchday = 0; state.SeasonComplete = false; state.CompletedEvents = []; state.TransferOffers = [];
@@ -911,6 +1307,7 @@ public sealed class SimulationEngine
     }
     private bool IsTransferWindow(CareerState state) => state.CurrentMatchday <= 3 || Math.Abs(state.CurrentMatchday - MatchdayCount(state) / 2) <= 1;
     private static int StartingOverall(string position) => position == "Portero" ? 57 : position == "Delantero" ? 60 : 58;
+    private static int StartingPotential(string archetype) => archetype switch { "Talento" => 90, "Incansable" or "Líder" => 86, _ => 84 };
     private List<int> SelectImportantMatchdays(CareerState state)
     {
         var playerFixtures = state.Fixtures.Where(f => f.Home == state.CurrentClub || f.Away == state.CurrentClub).ToList();
@@ -1321,7 +1718,7 @@ public sealed class SimulationEngine
     private CareerState ResolveSpecialMiniGame(CareerState state, SeasonEvent active, EventOption option, MiniGameSubmission? submission)
     {
         var success = ResolveMiniGame(state, active.Challenge!, submission);
-        state.SeasonMiniGameUsed = true;
+        if (!active.IsHubActivity) state.SeasonMiniGameUsed = true;
         var casinoAmount = 0;
         if (active.Challenge!.IsLuckGame)
         {
